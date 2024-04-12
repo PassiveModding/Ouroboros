@@ -29,7 +29,6 @@
             }
         }
     },
-    "Comment": "Vertex color semantics:\nRed: Muscle slider influence.\nGreen: Diffuse brightness.\nBlue: Specular strength.\nAlpha: \"Opacity\" (only used for the threshold).",
     "Samplers": {
         "207536625": {
             "Label": "Normal Map",
