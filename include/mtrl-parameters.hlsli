@@ -6,7 +6,7 @@
 
 #endif
 
-#if defined(SHPK_HAIR) || defined(SHPK_IRIS) || defined(SHPK_SKIN) || defined(SHPK_CHARACTER) || defined(SHPK_CHARACTERGLASS)
+#if defined(SHPK_HAIR) || defined(SHPK_IRIS) || defined(SHPK_SKIN) || defined(SHPK_CHARACTER) || defined(SHPK_CHARACTERSHADOWOFFSET) || defined(SHPK_CHARACTERGLASS)
 
 #define MATERIAL_PARAMETER_SIZE 6
 
@@ -24,6 +24,16 @@
 #define g_ScatteringLevel      (g_MaterialParameter[5].x)
 #define g_UNK_15B70E35         (g_MaterialParameter[5].y)
 #define g_NormalScale          (g_MaterialParameter[5].z)
+
+#ifdef SHPK_CHARACTERSHADOWOFFSET
+
+#define g_ShadowOffset         (g_MaterialParameter[5].w)
+
+#else
+
+#define g_ShadowOffset         0
+
+#endif
 
 #endif
 

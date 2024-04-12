@@ -10,7 +10,8 @@
       "Description": "",
       "Priority": 0,
       "Files": {
-        "penumbra/shpk_devkit/character.json": "shpk_devkit\\character.json"
+        "penumbra/shpk_devkit/character.json": "shpk_devkit\\character.json",
+        "penumbra/shpk_devkit/charactershadowoffset.json": "shpk_devkit\\character.json"
       },
       "FileSwaps": {},
       "Manipulations": []

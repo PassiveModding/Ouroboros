@@ -4,7 +4,12 @@
 
 void main(const VS_Input vs, out PS_Input ps)
 {
-    const float3 viewPosition = XFORM(float4(vs.position, 1));
+    float3 position = vs.position;
+#ifdef SUBVIEW_SHADOW0
+    position -= g_ShadowOffset * vs.normal * 0.01;
+#endif
+
+    const float3 viewPosition = XFORM(float4(position, 1));
 #ifdef PASS_Z
     ps.position = mul(g_CameraParameter.m_MainViewToProjectionMatrix, float4(viewPosition, 1));
 #ifndef SUBVIEW_CUBE0
@@ -25,7 +30,7 @@ void main(const VS_Input vs, out PS_Input ps)
     ps.misc.xyz = viewPosition;
 
     const float4 wetness = g_InstanceParameter.m_Wetness;
-    ps.misc.w = clamp(wetness.x * (vs.position.y * g_ModelParameter.m_Params.x + wetness.y),
+    ps.misc.w = clamp(wetness.x * (position.y * g_ModelParameter.m_Params.x + wetness.y),
         wetness.z, wetness.w);
 #endif
 #endif

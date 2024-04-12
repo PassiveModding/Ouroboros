@@ -144,6 +144,15 @@
                 "Label": "Normal Scale",
                 "Speed": 0.01
             }
+        ],
+        "2530391357": [
+            {
+                "Group": "General Settings",
+                "Label": "Shadow Offset",
+                "Speed": 0.1,
+                "Precision": 1,
+                "Unit": "cm"
+            }
         ]
     }
 }

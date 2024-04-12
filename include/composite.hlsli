@@ -131,7 +131,7 @@ struct CompositeShaderHelper
 
     void CalculateLightDiffuseSpecular()
     {
-#if defined(SHPK_CHARACTER) || defined(SHPK_CHARACTERGLASS)
+#if defined(SHPK_CHARACTER) || defined(SHPK_CHARACTERSHADOWOFFSET) || defined(SHPK_CHARACTERGLASS)
         const float2 cameraDiffSpec = g_InstanceParameter.m_CameraLight.m_DiffuseSpecular.xy;
         const float rimFactor = g_InstanceParameter.m_CameraLight.m_Rim.x;
 #else
@@ -142,7 +142,7 @@ struct CompositeShaderHelper
         const float finalOcclusionValue = lerp(occlusionValue, 1, g_SceneParameter.m_OcclusionIntensity.w * OCCLUSION_FACTOR);
         const float2 diffSpecOcclusion = POW(finalOcclusionValue, g_SceneParameter.m_OcclusionIntensity.xy);
         const float3 direction = normalize(float3(0, -0.2, 0) - viewPosition);
-#if defined(SHPK_HAIR) || defined(SHPK_CHARACTER)
+#if defined(SHPK_HAIR) || defined(SHPK_CHARACTER) || defined(SHPK_CHARACTERSHADOWOFFSET)
         const float diffDirFactor = saturate(dot(normal, direction));
 #else
         const float diffDirBase = saturate(dot(normal, direction) * 0.5 + 0.3);

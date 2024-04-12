@@ -70,7 +70,7 @@ struct InstanceData
     float4 m_InstanceParam2;
 };
 
-#if defined(SHPK_CHARACTER) || defined(SHPK_CHARACTERGLASS) || defined(SHPK_HAIR) || defined(SHPK_IRIS) || defined(SHPK_SKIN)
+#if defined(SHPK_CHARACTER) || defined(SHPK_CHARACTERSHADOWOFFSET) || defined(SHPK_CHARACTERGLASS) || defined(SHPK_HAIR) || defined(SHPK_IRIS) || defined(SHPK_SKIN)
 #define HAS_INSTANCE_PARAMETER
 struct InstanceParameter
 {
