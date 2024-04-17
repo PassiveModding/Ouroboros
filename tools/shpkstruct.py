@@ -827,7 +827,8 @@ class ShPk(HasResources):
             shader.write(writer)
         for mat_param in self.mat_params:
             mat_param.write(writer)
-        writer.write_float(self.mat_param_defaults)
+        if self.mat_param_defaults is not None:
+            writer.write_float(self.mat_param_defaults)
         for constant in self.constants:
             constant.write(writer)
         for sampler in self.samplers:
