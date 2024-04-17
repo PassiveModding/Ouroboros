@@ -1,6 +1,7 @@
 from binary_reader import BinaryReader
 import bstruct
 import crc
+import itertools
 import os
 import re
 import subprocess
@@ -35,17 +36,21 @@ def crc32_prefixed_calc(prefix_crc32: int, optimized: bool = False) -> crc.Calcu
 file_header_struct = bstruct.BStruct((
     (bstruct.bytes(4), 'magic'),             # 0
     (bstruct.uint32, 'version'),             # 1
-    (bstruct.bytes(4), 'dxmagic'),           # 2
+    (bstruct.bytes(4), 'graphics_platform'), # 2
     (bstruct.uint32, 'file_size'),           # 3
     (bstruct.uint32, 'blobs_offset'),        # 4
     (bstruct.uint32, 'strings_offset'),      # 5
     (bstruct.uint32, 'vertex_shader_count'), # 6
     (bstruct.uint32, 'pixel_shader_count'),  # 7
     (bstruct.uint32, 'mat_params_size'),     # 8
-    (bstruct.uint32, 'mat_param_count'),     # 9
-    (bstruct.uint32, 'constant_count'),      # 10 (A)
-    (bstruct.uint32, 'sampler_count'),       # 11 (B)
-    (bstruct.uint32, 'uav_count'),           # 12 (C)
+    (bstruct.uint16, 'mat_param_count'),     # 9
+    (bstruct.uint16, 'has_mat_param_defaults'),
+    (bstruct.uint16, 'constant_count'),      # 10 (A)
+    (bstruct.uint16, 'unk1'),
+    (bstruct.uint16, 'sampler_count'),       # 11 (B)
+    (bstruct.uint16, 'texture_count'),
+    (bstruct.uint16, 'uav_count'),           # 12 (C)
+    (bstruct.uint16, 'unk2'),
     (bstruct.uint32, 'system_key_count'),    # 13 (D)
     (bstruct.uint32, 'scene_key_count'),     # 14 (E)
     (bstruct.uint32, 'mat_key_count'),       # 15 (F)
@@ -57,6 +62,10 @@ class FileHeader:
     def __init__(self, data: dict) -> None:
         self.__dict__.update(data)
 
+    @property
+    def is_7(self) -> bool:
+        return self.has_mat_param_defaults != 0 or self.texture_count != 0
+
     @staticmethod
     def read(reader: BinaryReader) -> any:
         data = file_header_struct.read(reader)
@@ -67,8 +76,9 @@ class FileHeader:
 
 resource_struct = bstruct.BStruct((
     (bstruct.uint32, 'id'),
-    (bstruct.uint32, 'string_offset'),
-    (bstruct.uint32, 'string_size'),
+    (bstruct.uint32, 'name_offset'),
+    (bstruct.uint16, 'name_size'),
+    (bstruct.uint16, 'unk'), # Observed to always be 0 for constants and samplers, and 1 for textures
     (bstruct.uint16, 'slot'),
     (bstruct.uint16, 'size'),
 ))
@@ -87,12 +97,12 @@ class Resource:
     @staticmethod
     def read(reader: BinaryReader, strings: bytes) -> any:
         data = resource_struct.read(reader)
-        name = strings[data['string_offset']:(data['string_offset'] + data['string_size'])]
+        name = strings[data['name_offset']:(data['name_offset'] + data['name_size'])]
         return Resource(data, name)
 
     def update(self, shpk: any) -> None:
-        self.string_offset = shpk.find_or_add_string(self.name)
-        self.string_size = len(self.name)
+        self.name_offset = shpk.find_or_add_string(self.name)
+        self.name_size = len(self.name)
 
     def write(self, writer: BinaryReader) -> None:
         resource_struct.write(writer, self.__dict__)
@@ -133,6 +143,24 @@ class HasResources:
 
     def has_sampler_name(self, sampler_name: bytes) -> bool:
         return self.get_sampler_by_name(sampler_name) is not None
+
+    def get_texture_by_id(self, texture_id: int) -> Resource:
+        for texture in self.textures:
+            if texture.id == texture_id:
+                return texture
+        return None
+
+    def has_texture_id(self, texture_id: int) -> bool:
+        return self.get_texture_by_id(texture_id) is not None
+
+    def get_texture_by_name(self, texture_name: bytes) -> Resource:
+        for texture in self.textures:
+            if texture.name == texture_name:
+                return texture
+        return None
+
+    def has_texture_name(self, texture_name: bytes) -> bool:
+        return self.get_texture_by_name(texture_name) is not None
 
     def get_uav_by_id(self, uav_id: int) -> Resource:
         for uav in self.uavs:
@@ -219,11 +247,12 @@ INPUT_FLAGS = {
     'DEPTH': 1 << 16,
 }
 
-def parse_resource_bindings(fxc_dumpbin_output: str, expected_shader_model: int, expected_shader_stage: str) -> any:
+def parse_resource_bindings(fxc_dumpbin_output: str, graphics_platform: bytes, expected_shader_stage: str) -> any:
     lines = fxc_dumpbin_output.split('\n')
     instructions = [line for line in lines if not line.startswith('//') and len(line) > 0]
     shader_model = instructions[0].split('_')
     shader_model_major = int(shader_model[1])
+    expected_shader_model = 5 if graphics_platform == b'DX11' else 3
     if shader_model[0][0].lower() != expected_shader_stage or shader_model_major != expected_shader_model:
         raise ValueError("Expected %ss_%d_* shader, got %s" % (expected_shader_stage, expected_shader_model, instructions[0]))
     header = parse_header(lines[:lines.index(instructions[0])])
@@ -299,7 +328,7 @@ shader_struct = bstruct.BStruct((
     (bstruct.uint16, 'constant_count'),
     (bstruct.uint16, 'sampler_count'),
     (bstruct.uint16, 'uav_count'),
-    (bstruct.uint16, 'padding'),
+    (bstruct.uint16, 'texture_count'),
 ))
 
 stages = types.SimpleNamespace()
@@ -307,17 +336,18 @@ stages.STAGE_VERTEX = 'v'
 stages.STAGE_PIXEL = 'p'
 
 class Shader(HasResources):
-    def __init__(self, data: dict, stage: int, constants: list[Resource], samplers: list[Resource], uavs: list[Resource], extra_header: bytes, blob: bytes) -> None:
+    def __init__(self, data: dict, stage: int, constants: list[Resource], samplers: list[Resource], textures: list[Resource], uavs: list[Resource], extra_header: bytes, blob: bytes) -> None:
         self.__dict__.update(data)
         self.stage = stage
         self.constants = constants
         self.samplers = samplers
+        self.textures = textures
         self.uavs = uavs
         self.extra_header = extra_header
         self.blob = blob
 
     @staticmethod
-    def read(reader: BinaryReader, stage: int, dxmagic: bytes, blobs: bytes, strings: bytes) -> any:
+    def read(reader: BinaryReader, stage: int, graphics_platform: bytes, blobs: bytes, strings: bytes) -> any:
         data = shader_struct.read(reader)
         constants = []
         for _ in range(data['constant_count']):
@@ -328,14 +358,17 @@ class Shader(HasResources):
         uavs = []
         for _ in range(data['uav_count']):
             uavs.append(Resource.read(reader, strings))
+        textures = []
+        for _ in range(data['texture_count']):
+            textures.append(Resource.read(reader, strings))
         blob = blobs[data['offset']:(data['offset'] + data['size'])]
         if stage == stages.STAGE_VERTEX:
-            extra_header_size = 8 if dxmagic == b'DX11' else 4
+            extra_header_size = 8 if graphics_platform == b'DX11' else 4
             extra_header = blob[0:extra_header_size]
             blob = blob[extra_header_size:]
         else:
             extra_header = b''
-        return Shader(data, stage, constants, samplers, uavs, extra_header, blob)
+        return Shader(data, stage, constants, samplers, textures, uavs, extra_header, blob)
 
     def new_variant(self):
         return Shader({
@@ -355,6 +388,8 @@ class Shader(HasResources):
             constant.update(shpk)
         for sampler in self.samplers:
             sampler.update(shpk)
+        for texture in self.textures:
+            texture.update(shpk)
         for uav in self.uavs:
             uav.update(shpk)
 
@@ -364,8 +399,8 @@ class Shader(HasResources):
                 raw_disasm = f.read()
         else:
             raw_disasm = subprocess.run([FXC, '/nologo', '/dumpbin', new_shader_path], capture_output=True, text=True, check=True).stdout
-        (bindings, inputs) = parse_resource_bindings(raw_disasm, 5 if shpk.file_header.dxmagic == b'DX11' else 3, self.stage)
-        if shpk.file_header.dxmagic == b'DX11':
+        (bindings, inputs) = parse_resource_bindings(raw_disasm, shpk.file_header.graphics_platform, self.stage)
+        if shpk.file_header.graphics_platform == b'DX11' and not shpk.is_7:
             samplers = {}
             textures = {}
             for binding in bindings:
@@ -377,12 +412,13 @@ class Shader(HasResources):
             if len(samplers) != len(textures) or not all((samplers[slot] == textures.get(slot) for slot in samplers)):
                 raise ValueError("The supplied blob (%s) has inconsistent sampler and texture allocation." % (os.path.basename(new_shader_path),))
         if self.stage == stages.STAGE_VERTEX and inputs is not None:
-            if shpk.file_header.dxmagic == b'DX11':
+            if shpk.file_header.graphics_platform == b'DX11':
                 self.extra_header = struct.pack('<LL', inputs['declared'], inputs['used'])
             else:
                 self.extra_header = struct.pack('<L', inputs['declared'])
         constants = []
         samplers = []
+        textures = []
         uavs = []
         for binding in bindings:
             match binding['type']:
@@ -394,12 +430,27 @@ class Shader(HasResources):
                     id = existing.id if existing is not None else crc32(name)
                     constants.append(Resource({
                         'id': id,
-                        'string_offset': 0,
-                        'string_size': 0,
+                        'name_offset': 0,
+                        'name_size': 0,
+                        'unk': 0,
                         'slot': binding['slot'],
                         'size': binding['size'],
                     }, name))
                 case resource_types.RESOURCE_TEXTURE:
+                    name = bytes(normalize_resource_name(binding['name']), 'utf-8')
+                    existing = self.get_texture_by_name(name)
+                    if existing is None:
+                        existing = shpk.get_texture_by_name(name)
+                    id = existing.id if existing is not None else crc32(name)
+                    textures.append(Resource({
+                        'id': id,
+                        'name_offset': 0,
+                        'name_size': 0,
+                        'unk': 1,
+                        'slot': binding['slot'],
+                        'size': binding['slot'],
+                    }, name))
+                case resource_types.RESOURCE_SAMPLER:
                     name = bytes(normalize_resource_name(binding['name']), 'utf-8')
                     existing = self.get_sampler_by_name(name)
                     if existing is None:
@@ -407,8 +458,9 @@ class Shader(HasResources):
                     id = existing.id if existing is not None else crc32(name)
                     samplers.append(Resource({
                         'id': id,
-                        'string_offset': 0,
-                        'string_size': 0,
+                        'name_offset': 0,
+                        'name_size': 0,
+                        'unk': 0,
                         'slot': binding['slot'],
                         'size': binding['slot'],
                     }, name))
@@ -420,18 +472,21 @@ class Shader(HasResources):
                     id = existing.id if existing is not None else crc32(name)
                     uavs.append(Resource({
                         'id': id,
-                        'string_offset': 0,
-                        'string_size': 0,
+                        'name_offset': 0,
+                        'name_size': 0,
+                        'unk': 0, # XXX this one was never observed
                         'slot': binding['slot'],
                         'size': binding['slot'],
                     }, name))
         self.constants = constants
         self.samplers = samplers
+        self.textures = textures if shpk.is_7 else []
         self.uavs = uavs
 
     def write(self, writer: BinaryReader) -> None:
         self.constant_count = len(self.constants)
         self.sampler_count = len(self.samplers)
+        self.texture_count = len(self.textures)
         self.uav_count = len(self.uavs)
         shader_struct.write(writer, self.__dict__)
         for constant in self.constants:
@@ -440,6 +495,8 @@ class Shader(HasResources):
             sampler.write(writer)
         for uav in self.uavs:
             uav.write(writer)
+        for texture in self.textures:
+            texture.write(writer)
 
 mat_param_struct = bstruct.BStruct((
     (bstruct.uint32, 'id'),
@@ -534,19 +591,22 @@ def collect_sh_resources(resources: dict, sh_resources: list[Resource], get_exis
         existing = get_existing(resource.id)
         resources[resource.id] = Resource({
             'id': resource.id,
+            'unk': existing.unk if existing is not None else resource.unk,
             'slot': existing.slot if existing is not None else (65535 if resource_type == resource_types.RESOURCE_CBUFFER else 2),
             'size': max(carry.size if carry is not None else 0, resource.size) if resource_type == resource_types.RESOURCE_CBUFFER else (existing.size if existing is not None else 0),
         }, resource.name)
 
 class ShPk(HasResources):
-    def __init__(self, file_header: FileHeader, strings: bytes, vertex_shaders: list[Shader], pixel_shaders: list[Shader], mat_params: list[MatParam], constants: list[Resource], samplers: list[Resource], uavs: list[Resource], system_keys: list[tuple[int]], scene_keys: list[tuple[int]], mat_keys: list[tuple[int]], sub_view_keys: tuple[tuple[int]], nodes: list[Node], items: list[tuple[int]], rest: bytes) -> None:
+    def __init__(self, file_header: FileHeader, strings: bytes, vertex_shaders: list[Shader], pixel_shaders: list[Shader], mat_params: list[MatParam], mat_param_defaults: list[float], constants: list[Resource], samplers: list[Resource], textures: list[Resource], uavs: list[Resource], system_keys: list[tuple[int]], scene_keys: list[tuple[int]], mat_keys: list[tuple[int]], sub_view_keys: tuple[tuple[int]], nodes: list[Node], items: list[tuple[int]], rest: bytes) -> None:
         self.file_header = file_header
         self.strings = strings
         self.vertex_shaders = vertex_shaders
         self.pixel_shaders = pixel_shaders
         self.mat_params = mat_params
+        self.mat_param_defaults = mat_param_defaults
         self.constants = constants
         self.samplers = samplers
+        self.textures = textures
         self.uavs = uavs
         self.system_keys = system_keys
         self.scene_keys = scene_keys
@@ -555,6 +615,14 @@ class ShPk(HasResources):
         self.nodes = nodes
         self.items = items
         self.rest = rest
+
+    @property
+    def is_7(self) -> bool:
+        return self.file_header.is_7
+
+    @property
+    def all_shaders(self):
+        return itertools.chain(self.vertex_shaders, self.pixel_shaders)
 
     def get_shader(self, stage: int, index: int) -> Shader:
         match stage:
@@ -581,19 +649,23 @@ class ShPk(HasResources):
         strings = bytes(reader.buffer()[file_header.strings_offset:])
         vertex_shaders = []
         for _ in range(file_header.vertex_shader_count):
-            vertex_shaders.append(Shader.read(reader, stages.STAGE_VERTEX, file_header.dxmagic, blobs, strings))
+            vertex_shaders.append(Shader.read(reader, stages.STAGE_VERTEX, file_header.graphics_platform, blobs, strings))
         pixel_shaders = []
         for _ in range(file_header.pixel_shader_count):
-            pixel_shaders.append(Shader.read(reader, stages.STAGE_PIXEL, file_header.dxmagic, blobs, strings))
+            pixel_shaders.append(Shader.read(reader, stages.STAGE_PIXEL, file_header.graphics_platform, blobs, strings))
         mat_params = []
         for _ in range(file_header.mat_param_count):
             mat_params.append(MatParam.read(reader))
+        mat_param_defaults = reader.read_float(file_header.mat_params_size >> 2) if file_header.has_mat_param_defaults != 0 else None
         constants = []
         for _ in range(file_header.constant_count):
             constants.append(Resource.read(reader, strings))
         samplers = []
         for _ in range(file_header.sampler_count):
             samplers.append(Resource.read(reader, strings))
+        textures = []
+        for _ in range(file_header.texture_count):
+            textures.append(Resource.read(reader, strings))
         uavs = []
         for _ in range(file_header.uav_count):
             uavs.append(Resource.read(reader, strings))
@@ -618,7 +690,7 @@ class ShPk(HasResources):
         for _ in range(file_header.item_count):
             items.append(reader.read_uint32(2))
         rest = reader.read_bytes(file_header.blobs_offset - reader.pos())
-        return ShPk(file_header, strings, vertex_shaders, pixel_shaders, mat_params, constants, samplers, uavs, system_keys, scene_keys, mat_keys, sub_view_keys, nodes, items, rest)
+        return ShPk(file_header, strings, vertex_shaders, pixel_shaders, mat_params, mat_param_defaults, constants, samplers, textures, uavs, system_keys, scene_keys, mat_keys, sub_view_keys, nodes, items, rest)
 
     def find_or_add_string(self, string: bytes) -> int:
         pos = (b'\0' + self.strings).find(b'\0' + string)
@@ -684,15 +756,19 @@ class ShPk(HasResources):
             constant.update(self)
         for sampler in self.samplers:
             sampler.update(self)
+        for texture in self.textures:
+            texture.update(self)
         for uav in self.uavs:
             uav.update(self)
         for node in self.nodes:
             node.update(self)
+        self.update_mat_param_defaults()
         self.file_header.vertex_shader_count = len(self.vertex_shaders)
         self.file_header.pixel_shader_count = len(self.pixel_shaders)
         self.file_header.mat_param_count = len(self.mat_params)
         self.file_header.constant_count = len(self.constants)
         self.file_header.sampler_count = len(self.samplers)
+        self.file_header.texture_count = len(self.textures)
         self.file_header.uav_count = len(self.uavs)
         self.file_header.system_key_count = len(self.system_keys)
         self.file_header.scene_key_count = len(self.scene_keys)
@@ -708,17 +784,21 @@ class ShPk(HasResources):
     def update_resources(self) -> None:
         constants = {}
         samplers = {}
+        textures = {}
         uavs = {}
         for shader in self.vertex_shaders:
             collect_sh_resources(constants, shader.constants, self.get_constant_by_id, resource_types.RESOURCE_CBUFFER)
             collect_sh_resources(samplers, shader.samplers, self.get_sampler_by_id, resource_types.RESOURCE_SAMPLER)
+            collect_sh_resources(textures, shader.textures, self.get_texture_by_id, resource_types.RESOURCE_TEXTURE)
             collect_sh_resources(uavs, shader.uavs, self.get_uav_by_id, resource_types.RESOURCE_UAV)
         for shader in self.pixel_shaders:
             collect_sh_resources(constants, shader.constants, self.get_constant_by_id, resource_types.RESOURCE_CBUFFER)
             collect_sh_resources(samplers, shader.samplers, self.get_sampler_by_id, resource_types.RESOURCE_SAMPLER)
+            collect_sh_resources(textures, shader.textures, self.get_texture_by_id, resource_types.RESOURCE_TEXTURE)
             collect_sh_resources(uavs, shader.uavs, self.get_uav_by_id, resource_types.RESOURCE_UAV)
         self.constants = [constants[id] for id in constants]
         self.samplers = [samplers[id] for id in samplers]
+        self.textures = [textures[id] for id in textures]
         self.uavs = [uavs[id] for id in uavs]
         mat_params_size = 0
         mat_params_constant = self.get_constant_by_id(0x64D12851)
@@ -727,6 +807,17 @@ class ShPk(HasResources):
         for param in self.mat_params:
             mat_params_size = max(mat_params_size, param.offset + param.size)
         self.file_header.mat_params_size = (mat_params_size + 0xF) & ~0xF
+        self.update_mat_param_defaults()
+
+    def update_mat_param_defaults(self) -> None:
+        self.file_header.has_mat_param_defaults = 1 if self.mat_param_defaults is not None else 0
+        if self.mat_param_defaults is not None:
+            defaults_len = self.file_header.mat_params_size >> 2
+            len_delta = len(self.mat_param_defaults) - defaults_len
+            if len_delta > 0:
+                self.mat_param_defaults = self.mat_param_defaults[:defaults_len]
+            elif len_delta < 0:
+                self.mat_param_defaults.extend([0.0 for _ in range(-len_delta)])
 
     def unsafe_write_header(self, writer: BinaryReader) -> None:
         self.file_header.write(writer)
@@ -736,10 +827,13 @@ class ShPk(HasResources):
             shader.write(writer)
         for mat_param in self.mat_params:
             mat_param.write(writer)
+        writer.write_float(self.mat_param_defaults)
         for constant in self.constants:
             constant.write(writer)
         for sampler in self.samplers:
             sampler.write(writer)
+        for texture in self.textures:
+            texture.write(writer)
         for uav in self.uavs:
             uav.write(writer)
         for (sk, dv, _) in self.system_keys:

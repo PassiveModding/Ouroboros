@@ -2,6 +2,7 @@
 
 from binary_reader import BinaryReader
 import os
+import shpkdict
 import shpkstruct
 import sys
 from typing import NoReturn
@@ -24,6 +25,7 @@ def usage() -> NoReturn:
     print('      mk+ name:defaultvalue:value1,vsNEW/ORIG,...,psNEW/ORIG,...:value2,...:...')
     print('      ct= name:type')
     print('      st= name:type')
+    print('      tt= name:type')
     print('      ut= name:type')
     sys.exit(1)
 
@@ -128,15 +130,46 @@ shader_pack = read_shpk(sys.argv[2])
 
 match verb:
     case 'list' | 'toc' | 'ls' | 't':
+        print("This is a ShPk for version %d" % (7 if shader_pack.is_7 else 6,))
+        print()
         print("Valid shader IDs in this ShPk:")
         print("  vs0 .. vs%d" % (len(shader_pack.vertex_shaders) - 1,))
         print("  ps0 .. ps%d" % (len(shader_pack.pixel_shaders) - 1,))
         print()
-        print("Material parameters size for this ShPk: %d registers (%d bytes)" % (shader_pack.file_header.mat_params_size / 16, shader_pack.file_header.mat_params_size))
+        print("Material parameters for this ShPk: %d registers (%d bytes)" % (shader_pack.file_header.mat_params_size / 16, shader_pack.file_header.mat_params_size))
+        mp_name_suffix_length = 0
+        mp_location_str_length = 0
+        for mat_param in shader_pack.mat_params:
+            name = shpkdict.resolve(mat_param.id)
+            if name is not None:
+                mp_name_suffix_length = max(mp_name_suffix_length, len(name) + 3)
+            if (mat_param.offset & 3) == 0 or (mat_param.size & 3) == 0:
+                mp_location_str_length = max(mp_location_str_length, len(str(mat_param.offset >> 2)) + len(str(mat_param.size >> 2)) + 4)
+        for mat_param in shader_pack.mat_params:
+            name = shpkdict.resolve(mat_param.id)
+            name_suffix = (" : %s" % (name,) if name is not None else "").ljust(mp_name_suffix_length)
+            if (mat_param.offset & 3) != 0 or (mat_param.size & 3) != 0:
+                print("  0x%08X%s is unaligned (offset %d, size %d)" % (mat_param.id, name_suffix, mat_param.offset, mat_param.size))
+            else:
+                mp_start = mat_param.offset >> 2
+                mp_size = mat_param.size >> 2
+                mp_location_str = ("(%d%s:%d)" % (mp_start >> 2, "xyzw"[mp_start & 3], mp_size)).rjust(mp_location_str_length)
+                if shader_pack.mat_param_defaults is not None:
+                    print("  0x%08X%s %s : %s" % (mat_param.id, name_suffix, mp_location_str, ", ".join("%10.3f" % (value,) for value in shader_pack.mat_param_defaults[mp_start:(mp_start + mp_size)])))
+                else:
+                    print("  0x%08X%s %s" % (mat_param.id, name_suffix, mp_location_str))
         print()
-        print("Samplers used in this ShPk:")
-        for sampler in shader_pack.samplers:
-            print("  0x%08X : %s" % (sampler.id, sampler.name.decode('utf-8')))
+        print("Samplers and textures used in this ShPk:")
+        if shader_pack.is_7:
+            for sampler in shader_pack.samplers:
+                has_texture = "T" if shader_pack.has_texture_id(sampler.id) else " "
+                print("  0x%08X [S%s] : %s" % (sampler.id, has_texture, sampler.name.decode('utf-8')))
+            for texture in shader_pack.textures:
+                if not shader_pack.has_sampler_id(texture.id):
+                    print("  0x%08X [ T] : %s" % (texture.id, texture.name.decode('utf-8')))
+        else:
+            for sampler in shader_pack.samplers:
+                print("  0x%08X : %s" % (sampler.id, sampler.name.decode('utf-8')))
         exit()
     case 'update' | 'u':
         if len(extra_args) % 2 != 1:
@@ -173,6 +206,14 @@ match verb:
                         shader_pack.samplers.append(sampler)
                         update_global_resources = True
                     sampler.slot = res_type
+                case 'tt=':
+                    (res_name, res_type) = parse_resource_type_assignment(new_shader_path)
+                    texture = shader_pack.get_texture_by_name(res_name)
+                    if texture is None:
+                        texture = create_resource(res_name)
+                        shader_pack.textures.append(texture)
+                        update_global_resources = True
+                    texture.slot = res_type
                 case 'ut=':
                     (res_name, res_type) = parse_resource_type_assignment(new_shader_path)
                     uav = shader_pack.get_uav_by_name(res_name)
@@ -198,7 +239,7 @@ match verb:
             wanted_shaders.extend(['ps' + str(i) for i in range(len(shader_pack.pixel_shaders))])
         else:
             wanted_shaders = extra_args
-        ext = '.dxbc' if shader_pack.file_header.dxmagic == b'DX11' else '.cso'
+        ext = '.dxbc' if shader_pack.file_header.graphics_platform == b'DX11' else '.cso'
         for shader_id in wanted_shaders:
             shader = get_shader(shader_pack, shader_id)
             suffix = '.ps' if shader.stage == shpkstruct.stages.STAGE_PIXEL else '.vs'

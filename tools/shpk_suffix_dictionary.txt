@@ -1,0 +1,11 @@
+Alpha
+Body
+Color
+Compatibility
+Face
+Hair
+Mask
+Off
+ReflectivityRGB
+RGBA
+Simple
