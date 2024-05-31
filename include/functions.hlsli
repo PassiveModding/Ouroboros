@@ -58,3 +58,17 @@ float nearestNeighbor64(const float value)
 {
     return 0.015625 * (0.5 + floor(64 * value));
 }
+
+float hardLight(const float top, const float base)
+{
+    return (top < 0.5)
+        ? 2.0 * base * top
+        : 1.0 - 2.0 * (1.0 - base) * (1.0 - top);
+}
+
+float softLightPS(const float top, const float base)
+{
+    return (top < 0.5)
+        ? 2.0 * base * top + base * base * (1.0 - 2.0 * top)
+        : 2.0 * base * (1.0 - top) + sqrt(base) * (2.0 * top - 1.0);
+}

@@ -7,6 +7,7 @@ g_DiffuseColor
 g_EmissiveColor
 g_FresnelValue0
 g_FurLength
+g_GlassIOR
 g_HairBackScatterRoughnessOffsetRate
 g_HairScatterColorShift
 g_HairSecondaryRoughnessOffsetRate
@@ -22,6 +23,7 @@ g_NormalScale
 g_OutlineColor
 g_OutlineWidth
 g_ScatteringLevel
+g_ShadowOffset
 g_SheenAperture
 g_SheenRate
 g_SheenTintRate
@@ -31,6 +33,7 @@ g_SSAOMask
 g_SubSurfacePower
 g_SubSurfaceProfileID
 g_SubSurfaceWidth
+g_TextureMipBias
 g_TileAlpha
 g_TileIndex
 g_TileScale
