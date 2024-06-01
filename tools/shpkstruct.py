@@ -378,7 +378,7 @@ class Shader(HasResources):
             'offset': 0,
             'size': 0,
             'padding': 0,
-        }, self.stage, [], [], [], self.extra_header, b"")
+        }, self.stage, [], [], [], [], self.extra_header, b"")
 
     def update(self, shpk: any) -> None:
         self.offset = len(shpk.blobs)
