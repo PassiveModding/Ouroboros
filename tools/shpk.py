@@ -94,11 +94,12 @@ def parse_resource_type_assignment(assignment: str) -> tuple[bytes, int]:
     tokens = assignment.split(':')
     return (bytes(tokens[0], 'utf-8'), int(tokens[1]))
 
-def create_resource(name: bytes) -> shpkstruct.Resource:
+def create_resource(name: bytes, is_texture: bool) -> shpkstruct.Resource:
     return shpkstruct.Resource({
         'id': shpkstruct.crc32(name),
-        'string_offset': 0,
-        'string_size': 0,
+        'name_offset': 0,
+        'name_size': 0,
+        'unk': 1 if is_texture else 0,
         'slot': 0,
         'size': 0,
     }, name)
@@ -194,7 +195,7 @@ match verb:
                     (res_name, res_type) = parse_resource_type_assignment(new_shader_path)
                     constant = shader_pack.get_constant_by_name(res_name)
                     if constant is None:
-                        constant = create_resource(res_name)
+                        constant = create_resource(res_name, False)
                         shader_pack.constants.append(constant)
                         update_global_resources = True
                     constant.slot = res_type
@@ -202,7 +203,7 @@ match verb:
                     (res_name, res_type) = parse_resource_type_assignment(new_shader_path)
                     sampler = shader_pack.get_sampler_by_name(res_name)
                     if sampler is None:
-                        sampler = create_resource(res_name)
+                        sampler = create_resource(res_name, False)
                         shader_pack.samplers.append(sampler)
                         update_global_resources = True
                     sampler.slot = res_type
@@ -210,7 +211,7 @@ match verb:
                     (res_name, res_type) = parse_resource_type_assignment(new_shader_path)
                     texture = shader_pack.get_texture_by_name(res_name)
                     if texture is None:
-                        texture = create_resource(res_name)
+                        texture = create_resource(res_name, True)
                         shader_pack.textures.append(texture)
                         update_global_resources = True
                     texture.slot = res_type
@@ -218,7 +219,7 @@ match verb:
                     (res_name, res_type) = parse_resource_type_assignment(new_shader_path)
                     uav = shader_pack.get_uav_by_name(res_name)
                     if uav is None:
-                        uav = create_resource(res_name)
+                        uav = create_resource(res_name, False)
                         shader_pack.uavs.append(uav)
                         update_global_resources = True
                     uav.slot = res_type
