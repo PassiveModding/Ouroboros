@@ -24,6 +24,7 @@ g_HeightScale
 g_InclusionAperture
 g_Intensity
 g_IrisRingColor
+g_IrisRingEmissiveIntensity
 g_IrisThickness
 g_LayerColor
 g_LayerDepth
@@ -32,6 +33,7 @@ g_LayerScale
 g_LayerVelocity
 g_LightingType
 g_LipFresnelValue0
+g_LipRoughnessScale
 g_LipShininess
 g_NearClip
 g_NormalScale
