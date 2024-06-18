@@ -47,6 +47,7 @@ g_SheenRate
 g_SheenTintRate
 g_Shininess
 g_SpecularColor
+g_SpecularColorMask
 g_SpecularMask
 g_SpecularPower
 g_SSAOMask
