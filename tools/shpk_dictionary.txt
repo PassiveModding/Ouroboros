@@ -36,6 +36,7 @@ g_InclusionAperture
 g_Intensity
 g_IrisRingColor
 g_IrisRingEmissiveIntensity
+g_IrisOptionColorRate
 g_IrisThickness
 g_LayerColor
 g_LayerDepth
